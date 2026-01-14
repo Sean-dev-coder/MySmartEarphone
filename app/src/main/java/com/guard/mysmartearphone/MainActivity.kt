@@ -115,11 +115,22 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onError(error: Int) {
-                // 如果是持續模式且沒有在說話，才重啟
-                if (isKeepListening && !tts.isSpeaking) {
+                Log.e("SpeechError", "錯誤代碼：$error")
+
+                // 如果是因為超時 (7) 或忙碌 (8)，我們直接重試
+                if (isKeepListening) {
+                    val audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
+
+                    // 🌟 核心邏輯：如果錯誤是因為藍牙斷線，先嘗試重新啟動 SCO
+                    if (error == SpeechRecognizer.ERROR_AUDIO || error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) {
+                        enableBluetoothMic(audioManager)
+                    }
+
                     android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                        // 確保重啟前先把舊的銷毀，清空狀態
+                        speechRecognizer.cancel()
                         startListening()
-                    }, 500)
+                    }, 1000)
                 }
             }
 
@@ -247,6 +258,26 @@ class MainActivity : AppCompatActivity() {
             Log.d("AudioDebug", "藍牙 SCO 已嘗試啟動")
         } else {
             Log.e("AudioDebug", "此裝置不支援離線藍牙 SCO")
+        }
+    }
+    private fun enableBluetoothMic(audioManager: AudioManager) {
+        // 1. 設定模式為通訊模式 (這行是啟動 SCO 的前提)
+        audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            // 🌟 Android 12+ 的新版寫法
+            val devices = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS)
+            val bluetoothMic = devices.find { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO }
+            if (bluetoothMic != null) {
+                audioManager.setCommunicationDevice(bluetoothMic)
+                Log.d("SCO", "已成功切換至藍牙麥克風裝置")
+            }
+        } else {
+            // 舊版補丁
+            @Suppress("DEPRECATION")
+            audioManager.startBluetoothSco()
+            @Suppress("DEPRECATION")
+            audioManager.isBluetoothScoOn = true
         }
     }
     override fun onDestroy() {
