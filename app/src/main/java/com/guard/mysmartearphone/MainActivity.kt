@@ -174,51 +174,87 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun queryVehicle(plateText: String) {
-        // 🌟 文字淨化：過濾掉「加」、「+」
+        // 1. 文字淨化：過濾掉「加」、「+」等干擾
         val cleanPlate = plateText.replace(Regex("[^A-Za-z0-9]"), "")
         if (cleanPlate.isBlank()) return
 
-        val db = Firebase.firestore
-        val collectionRef = db.collection("licensePlates")
+        // 2. 🌟 動態路徑對應表：根據選單名稱對應到正確的資料表
+        val collectionPath = when (selectedCommunity) {
+            "大陸麗格" -> "licensePlates"
+            "大陸寶格" -> "licensePlates_treasure"
+            "大陸豐蒔" -> "licensePlates_epoque"
+            else -> "licensePlates" // 預設路徑
+        }
 
-        collectionRef.document(cleanPlate).get().addOnSuccessListener { document ->
-            if (document != null && document.exists()) {
-                val houseCode = document.getString("householdCode") ?: "未知"
-                val notes = document.getString("notes") ?: ""
-                runOnUiThread { tvResult.text = "✅ 查詢成功\n戶號：$houseCode\n車牌：$cleanPlate\n備註：$notes" }
-                speakOut("找到了，這是 $houseCode 的住戶。$notes")
-            } else {
-                collectionRef.whereArrayContains("searchKeywords", cleanPlate).get().addOnSuccessListener { documents ->
-                    if (!documents.isEmpty) {
-                        lastQueryDocuments = documents.documents
-                        if (documents.size() == 1) {
-                            val doc = documents.documents[0]
-                            val hCode = doc.getString("householdCode") ?: ""
-                            runOnUiThread { tvResult.text = "🔍 模糊比對成功\n戶號：$hCode\n車牌：${doc.id}" }
-                            speakOut("查到了，這是 $hCode 的車")
-                        } else {
-                            // 🌟 處理大量多筆：縮短語音引導
-                            val total = documents.size()
-                            if (total <= 3) {
-                                val houseList = documents.documents.mapIndexed { i, d -> "第${i+1}個${d.getString("householdCode")}" }.joinToString(" ")
-                                speakOut("找到 $total 筆：$houseList。請問選第幾個？")
-                            } else {
-                                speakOut("符合車牌共有 $total 筆，請補上英文字母。")
-                            }
-                            runOnUiThread {
-                                val display = documents.documents.joinToString("\n") { "${it.id} (${it.getString("householdCode")})" }
-                                tvResult.text = "🔍 找到多筆符合：\n$display"
-                            }
+        val db = Firebase.firestore
+        val collectionRef = db.collection(collectionPath)
+
+        Log.d("FirebaseQuery", "正在查詢社區：$selectedCommunity，路徑：$collectionPath")
+
+        // 3. 執行查詢
+        collectionRef.document(cleanPlate).get()
+            .addOnSuccessListener { document ->
+                if (document != null && document.exists()) {
+                    // 精確命中邏輯
+                    processSingleResult(document, cleanPlate)
+                } else {
+                    // 模糊查詢邏輯
+                    collectionRef.whereArrayContains("searchKeywords", cleanPlate).get()
+                        .addOnSuccessListener { documents ->
+                            handleMultipleResults(documents, cleanPlate)
                         }
-                    } else {
-                        runOnUiThread { tvResult.text = "❌ 查無資料：$cleanPlate" }
-                        speakOut("找不到車牌 $cleanPlate 的資料")
-                    }
                 }
             }
-        }.addOnFailureListener { speakOut("查詢失敗，請檢查網路") }
+            .addOnFailureListener { speakOut("查詢失敗，請檢查網路") }
+    }
+    // 1. 處理「單筆精確命中」的結果
+    private fun processSingleResult(document: DocumentSnapshot, plateText: String) {
+        val houseCode = document.getString("householdCode") ?: "未知"
+        val notes = document.getString("notes") ?: ""
+
+        runOnUiThread {
+            tvResult.text = "✅ 查詢成功\n戶號：$houseCode\n車牌：$plateText\n備註：$notes"
+        }
+        speakOut("找到了，這是 $houseCode 的住戶。$notes")
     }
 
+    // 2. 處理「模糊查詢」回傳的多筆結果
+    private fun handleMultipleResults(documents: com.google.firebase.firestore.QuerySnapshot, plateText: String) {
+        if (documents.isEmpty) {
+            runOnUiThread { tvResult.text = "❌ 查無資料：$plateText" }
+            speakOut("找不到車牌 $plateText 的資料")
+            return
+        }
+
+        lastQueryDocuments = documents.documents // 存入暫存供語音選單使用
+
+        if (documents.size() == 1) {
+            // 只有一筆模糊命中
+            val doc = documents.documents[0]
+            val hCode = doc.getString("householdCode") ?: ""
+            runOnUiThread { tvResult.text = "🔍 模糊比對成功\n戶號：$hCode\n車牌：${doc.id}" }
+            speakOut("查到了，這是 $hCode 的車")
+        } else {
+            // 處理多筆資料交互邏輯
+            val total = documents.size()
+            if (total <= 3) {
+                val houseList = documents.documents.mapIndexed { i, d ->
+                    "第${i + 1}個${d.getString("householdCode") ?: "未知"}"
+                }.joinToString(" ")
+                speakOut("找到 $total 筆：$houseList。請問選第幾個？")
+            } else {
+                // 符合項過多時的引導
+                speakOut("符合車牌共有 $total 筆，請補上英文字母。")
+            }
+
+            runOnUiThread {
+                val display = documents.documents.joinToString("\n") {
+                    "${it.id} (${it.getString("householdCode")})"
+                }
+                tvResult.text = "🔍 找到多筆符合：\n$display" //
+            }
+        }
+    }
     private fun speakOut(text: String) {
         isTtsSpeaking = true // 💡 標記正在說話
         speechRecognizer.stopListening() // 🗣 說話時必須關閉錄音
