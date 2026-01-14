@@ -1,5 +1,6 @@
 package com.guard.mysmartearphone
-
+import com.google.firebase.firestore.ktx.firestore
+import com.google.firebase.ktx.Firebase
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.content.Intent
@@ -105,9 +106,8 @@ class MainActivity : AppCompatActivity() {
                     isKeepListening = false
                     speakOut("好的，已為您結束查詢服務")
                 } else {
-                    // 🌟 重點：這裡「只管說話」，不要在這裡寫 startListening()
-                    // 讓 speakOut 的 onDone 去負責重啟，才不會衝突
-                    speakOut("您剛剛說的是：$text")
+                    // 🌟 換成這行：去資料庫查
+                    queryVehicle(text)
                 }
             }
 
@@ -173,6 +173,54 @@ class MainActivity : AppCompatActivity() {
             }
         }
         statusView.text = "目前收音路徑：$sourceName"
+    }
+    private fun queryVehicle(plateText: String) {
+        val db = Firebase.firestore
+        // 根據你提供的截圖，路徑是 licensePlates
+        val collectionRef = db.collection("licensePlates")
+
+        // 🌟 先試著用完整車牌 (Document ID) 找
+        collectionRef.document(plateText).get()
+            .addOnSuccessListener { document ->
+                if (document != null && document.exists()) {
+                    val houseCode = document.getString("householdCode") ?: "未知"
+                    val notes = document.getString("notes") ?: ""
+
+                    // 🌟 關鍵：必須在這裡更新 TextView
+                    runOnUiThread {
+                        tvResult.text = "✅ 查詢成功\n戶號：$houseCode\n車牌：$plateText\n備註：$notes"
+                    }
+
+                    speakOut("找到了，這是 $houseCode 的住戶。$notes")
+                } else {
+                    // 2. 進入模糊查詢的區塊
+                    collectionRef.whereArrayContains("searchKeywords", plateText).get()
+                        .addOnSuccessListener { documents ->
+                            if (!documents.isEmpty) {
+                                val firstDoc = documents.documents[0]
+                                val hCode = firstDoc.getString("householdCode") ?: ""
+                                val realPlate = firstDoc.id
+                                val nts = firstDoc.getString("notes") ?: ""
+
+                                // 🌟 關鍵：模糊查詢成功也要更新 UI
+                                runOnUiThread {
+                                    tvResult.text = "🔍 模糊比對成功\n戶號：$hCode\n完整車牌：$realPlate\n備註：$nts"
+                                }
+                                speakOut("查到了，這是 $hCode 的車")
+                            }else {
+                                // 🌟 關鍵修正 2：真的完全查不到資料
+                                runOnUiThread {
+                                    tvResult.text = "❌ 查無資料：$plateText"
+                                }
+                                // 必須說話！這樣才會觸發 TTS 的 onDone，進而重啟監聽
+                                speakOut("抱歉，找不到車牌 $plateText 的資料，請再說一次")
+                            }
+                        }
+                }
+            }
+            .addOnFailureListener { e ->
+                speakOut("查詢失敗，請檢查網路")
+            }
     }
 
     override fun onDestroy() {

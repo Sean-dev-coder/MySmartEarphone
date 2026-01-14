@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "302451412754",
+    "project_id": "license-plate-app-4b7d8",
+    "storage_bucket": "license-plate-app-4b7d8.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:302451412754:android:7b7eda3c272ce9d3ee6dcb",
+        "android_client_info": {
+          "package_name": "com.guard.mysmartearphone"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBkussk7y_nf1QinokOdygMDKJsvQC0uIs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
