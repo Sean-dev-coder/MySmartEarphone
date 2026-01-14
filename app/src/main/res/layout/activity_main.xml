@@ -3,8 +3,25 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:gravity="center"
-    android:padding="20dp">
+    android:padding="20dp"
+    android:gravity="center_horizontal">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="請選擇查詢社區"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        android:layout_marginTop="20dp"
+        android:layout_marginBottom="8dp" />
+
+    <Spinner
+        android:id="@+id/spinner_community"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:minHeight="48dp"
+        android:background="@android:drawable/btn_dropdown"
+        android:layout_marginBottom="20dp" />
 
     <TextView
         android:id="@+id/tv_source_status"
@@ -12,15 +29,15 @@
         android:layout_height="wrap_content"
         android:text="收音來源偵測中..."
         android:textColor="#FF0000"
-        android:textSize="14sp"
-        android:layout_marginBottom="20dp" />
+        android:layout_marginBottom="10dp" />
 
     <TextView
         android:id="@+id/tv_speech_result"
         android:layout_width="match_parent"
-        android:layout_height="200dp"
+        android:layout_height="0dp"
+        android:layout_weight="1"
         android:background="#F0F0F0"
-        android:hint="語音辨識內容將顯示於此..."
+        android:hint="查詢結果將顯示於此..."
         android:padding="15dp"
         android:textSize="18sp"
         android:layout_marginBottom="20dp" />
@@ -29,6 +46,7 @@
         android:id="@+id/btn_listen"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="開始說話" />
+        android:padding="12dp"
+        android:text="開始查詢車牌" />
 
 </LinearLayout>
