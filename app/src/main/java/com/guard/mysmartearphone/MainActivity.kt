@@ -107,6 +107,11 @@ class MainActivity : AppCompatActivity() {
 
                 if (text.contains("結束查詢") || text.contains("停止") || text.contains("結束")) {
                     isKeepListening = false
+                    // 🌟 關鍵：必須手動把藍牙「放掉」
+                    val audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
+                    audioManager.stopBluetoothSco()             // 停止 SCO
+                    audioManager.isBluetoothScoOn = false       // 關閉開關
+                    audioManager.mode = AudioManager.MODE_NORMAL // 回復正常模式（音樂模式）
                     speakOut("好的，已為您結束查詢服務")
                 } else {
                     // 🌟 換成這行：去資料庫查
@@ -133,7 +138,6 @@ class MainActivity : AppCompatActivity() {
                     }, 1000)
                 }
             }
-
             override fun onBeginningOfSpeech() {}
             override fun onRmsChanged(rmsdB: Float) {
                 // rmsdB 是分貝值，通常在 -2 到 10 之間跳動
