@@ -84,12 +84,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startListening() {
+        // 🌟 在聽之前，確保藍牙管線切換到麥克風模式
+        setupBluetoothAudio()
         // 如果正在說話，就不啟動監聽
         if (tts.isSpeaking) return
-
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_WEB_SEARCH)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-TW")
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 500L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 500L)
         }
 
         speechRecognizer.setRecognitionListener(object : RecognitionListener {
@@ -121,7 +124,15 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onBeginningOfSpeech() {}
-            override fun onRmsChanged(rmsdB: Float) {}
+            override fun onRmsChanged(rmsdB: Float) {
+                // rmsdB 是分貝值，通常在 -2 到 10 之間跳動
+                if (rmsdB > 0) {
+                    runOnUiThread {
+                        // 在狀態列顯示音量感應，如果有在跳，代表收音管線是通的
+                        findViewById<TextView>(R.id.tv_source_status).text = "🎙 藍牙收音中... (感應強度: ${rmsdB.toInt()})"
+                    }
+                }
+            }
             override fun onBufferReceived(buffer: ByteArray?) {}
             override fun onEndOfSpeech() {}
             override fun onPartialResults(partialResults: Bundle?) {}
@@ -222,7 +233,22 @@ class MainActivity : AppCompatActivity() {
                 speakOut("查詢失敗，請檢查網路")
             }
     }
+    private fun setupBluetoothAudio() {
+        val audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
 
+        // 1. 檢查是否支援藍牙 SCO
+        if (audioManager.isBluetoothScoAvailableOffCall) {
+            // 2. 開啟藍牙 SCO 連線
+            audioManager.startBluetoothSco()
+
+            // 3. 設定為通訊模式（這會切換藍牙協定從 A2DP 到 SCO）
+            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+            audioManager.isBluetoothScoOn = true
+            Log.d("AudioDebug", "藍牙 SCO 已嘗試啟動")
+        } else {
+            Log.e("AudioDebug", "此裝置不支援離線藍牙 SCO")
+        }
+    }
     override fun onDestroy() {
         if (::tts.isInitialized) {
             tts.stop()
