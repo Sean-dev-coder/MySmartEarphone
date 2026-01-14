@@ -174,8 +174,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun queryVehicle(plateText: String) {
-        // 1. 文字淨化：過濾掉「加」、「+」等干擾
-        val cleanPlate = plateText.replace(Regex("[^A-Za-z0-9]"), "")
+        // 🌟 呼叫重構後的轉換工具
+        val cleanPlate = convertSpokenPlate(plateText)
         if (cleanPlate.isBlank()) return
 
         // 2. 🌟 動態路徑對應表：根據選單名稱對應到正確的資料表
@@ -319,7 +319,39 @@ class MainActivity : AppCompatActivity() {
         }
         statusView.text = "目前收音路徑：$sourceName"
     }
+    /**
+     * 處理語音簡化邏輯：將「4個8」或「四個零」轉換為「8888」或「0000」
+     */
+    private fun convertSpokenPlate(text: String): String {
+        var result = text
+        val digitMap = mapOf(
+            "零" to "0", "0" to "0", "一" to "1", "1" to "1", "二" to "2", "2" to "2",
+            "三" to "3", "3" to "3", "四" to "4", "4" to "4", "五" to "5", "5" to "5",
+            "六" to "6", "6" to "6", "七" to "7", "7" to "7", "八" to "8", "8" to "8",
+            "九" to "9", "9" to "9"
+        )
 
+        // 正則表達式：尋找 (數字/國字) + "個" + (數字/國字/零)
+        val regex = Regex("([0-9一二三四五六七八九])個([0-9一二三四五六七八九零])")
+        val matches = regex.findAll(result)
+
+        for (match in matches) {
+            val countStr = match.groupValues[1]
+            val digitStr = match.groupValues[2]
+
+            val count = digitMap[countStr]?.toIntOrNull() ?: 0
+            val digit = digitMap[digitStr] ?: ""
+
+            if (count > 0 && digit.isNotEmpty()) {
+                val repeatedDigits = digit.repeat(count)
+                result = result.replace(match.value, repeatedDigits)
+                Log.d("VoiceConvert", "轉換成功: ${match.value} -> $repeatedDigits")
+            }
+        }
+
+        // 最後進行標準化淨化：移除所有非英數字元
+        return result.replace(Regex("[^A-Za-z0-9]"), "")
+    }
     override fun onDestroy() {
         if (::tts.isInitialized) { tts.stop(); tts.shutdown() }
         if (::speechRecognizer.isInitialized) { speechRecognizer.destroy() }
