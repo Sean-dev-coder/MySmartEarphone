@@ -387,56 +387,18 @@ class MainActivity : AppCompatActivity() {
             Log.e("OfflineSync", "同步失敗: ${e.message}")
         }
     }
-    private fun initSpeechRecognizer() {
-        if (SpeechRecognizer.isRecognitionAvailable(this)) {
-            // 🌟 核心修正：使用 Android 16 推薦的 OnDevice 辨識器
-            val recognizer = if (android.os.Build.VERSION.SDK_INT >= 31) {
-                // 直接建立「純裝置端」辨識器，這會強制繞過網路檢查
-                SpeechRecognizer.createOnDeviceSpeechRecognizer(this)
-            } else {
-                SpeechRecognizer.createSpeechRecognizer(this)
-            }
-
-            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-TW")
-
-                // 🌟 強制設定 A：只允許離線辨識
-                putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-
-                // 🌟 強制設定 B：指定由 Google 引擎負責（避免系統亂跳）
-                putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
-            }
-
-            recognizer.setRecognitionListener(object : RecognitionListener {
-                // 🌟 這些是必須補齊的 8 個方法，補齊後紅字 object 就會消失
-                override fun onReadyForSpeech(params: Bundle?) { Log.d("STT", "可以開始說話了") }
-                override fun onBeginningOfSpeech() {}
-                override fun onRmsChanged(rmsdB: Float) {}
-                override fun onBufferReceived(buffer: ByteArray?) {}
-                override fun onEndOfSpeech() {}
-
-                override fun onError(error: Int) {
-                    // 這裡會抓到斷網時最關鍵的 error 13
-                    Log.e("STT", "辨識錯誤代碼: $error")
-                    speechRecognizer.destroy()
-                }
-
-                override fun onResults(results: Bundle?) {
-                    // 這裡拿到辨識出的車牌文字
-                    val data = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                    val resultText = data?.get(0) ?: ""
-                    Log.d("STT", "辨識結果: $resultText")
-                }
-
-                override fun onPartialResults(partialResults: Bundle?) {}
-                override fun onEvent(eventType: Int, params: Bundle?) {}
-            })
-        }
-    }
     override fun onDestroy() {
         if (::tts.isInitialized) { tts.stop(); tts.shutdown() }
         if (::speechRecognizer.isInitialized) { speechRecognizer.destroy() }
         super.onDestroy()
+        if (::speechRecognizer.isInitialized) {
+            speechRecognizer.stopListening()
+            speechRecognizer.cancel()
+            speechRecognizer.destroy()
+            Log.d("STT", "SpeechRecognizer 已徹底銷毀，釋放麥克風資源")
+        }
+        // 🌟 2. 停止前台服務，這樣通知欄的狀態才會消失
+        val serviceIntent = Intent(this, VoiceService::class.java)
+        stopService(serviceIntent)
     }
 }

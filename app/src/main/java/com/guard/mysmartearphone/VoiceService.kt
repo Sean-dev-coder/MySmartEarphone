@@ -30,4 +30,12 @@ class VoiceService : Service() {
 
         return START_STICKY
     }
+    // 在 VoiceService.kt 內
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+
+        // 當 App 被滑掉時，自動停止自己並移除通知
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
 }
