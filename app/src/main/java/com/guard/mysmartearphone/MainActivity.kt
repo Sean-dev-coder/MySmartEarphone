@@ -37,6 +37,9 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        val intent = Intent(this, VoiceService::class.java)
+        startForegroundService(intent)
+
         tvResult = findViewById(R.id.tv_speech_result)
         val spinner = findViewById<Spinner>(R.id.spinner_community)
         val btnListen = findViewById<Button>(R.id.btn_listen)
