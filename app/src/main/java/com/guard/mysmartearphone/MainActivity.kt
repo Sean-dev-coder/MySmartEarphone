@@ -1,9 +1,12 @@
 package com.guard.mysmartearphone
 
 import com.google.firebase.firestore.ktx.firestore
+import com.google.firebase.firestore.DocumentSnapshot
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FirebaseFirestoreSettings
+import com.google.firebase.firestore.PersistentCacheSettings
 import com.google.firebase.ktx.Firebase
 import android.media.AudioDeviceInfo
-import com.google.firebase.firestore.DocumentSnapshot
 import android.media.AudioManager
 import android.content.Intent
 import android.os.Bundle
@@ -36,10 +39,10 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-
+        setupFirestoreOffline()
+        syncAllDataForOffline("licensePlates")
         val intent = Intent(this, VoiceService::class.java)
         startForegroundService(intent)
-
         tvResult = findViewById(R.id.tv_speech_result)
         val spinner = findViewById<Spinner>(R.id.spinner_community)
         val btnListen = findViewById<Button>(R.id.btn_listen)
@@ -57,6 +60,7 @@ class MainActivity : AppCompatActivity() {
                 if (isFirstLoad) { isFirstLoad = false; return }
                 stopSpeechLogic()
                 speakOut("已切換至 $selectedCommunity")
+                syncAllDataForOffline(selectedCommunity)
             }
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
@@ -109,7 +113,6 @@ class MainActivity : AppCompatActivity() {
             // 調短靜音判斷，增加連貫感
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 600L)
         }
-
         speechRecognizer.setRecognitionListener(object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {
                 runOnUiThread { findViewById<TextView>(R.id.tv_source_status).text = "🎙 正在聽取 $selectedCommunity..." }
@@ -354,6 +357,82 @@ class MainActivity : AppCompatActivity() {
 
         // 最後進行標準化淨化：移除所有非英數字元
         return result.replace(Regex("[^A-Za-z0-9]"), "")
+    }
+    /**
+     * 設定資料快取在本地端,離線服務
+     */
+    private fun setupFirestoreOffline() {
+        val db = FirebaseFirestore.getInstance()
+
+        // 🌟 核心設定：啟動持久化快取
+        val settings = FirebaseFirestoreSettings.Builder()
+            .setLocalCacheSettings(PersistentCacheSettings.newBuilder()
+                // 設定快取大小（例如 100MB），確保能存下所有社區的車牌資料
+                .setSizeBytes(100 * 1024 * 1024)
+                .build())
+            .build()
+
+        db.firestoreSettings = settings
+    }
+    /**
+     * 設定全量資料快取在本地端,離線服務
+     */
+    private fun syncAllDataForOffline(collectionPath: String) {
+        val db = Firebase.firestore
+        // 取得該社區的所有車牌資料,取得該集合的所有文件，這會強制將資料寫入本地快取女
+        db.collection(collectionPath).get().addOnSuccessListener { documents ->
+            // 同步成功後，Logcat 會記錄筆數，讓開發者確認資料有進手機
+            Log.d("OfflineSync", "社區 ${collectionPath} 同步成功，共 ${documents.size()} 筆資料已存入離線快取")
+        }.addOnFailureListener { e ->
+            Log.e("OfflineSync", "同步失敗: ${e.message}")
+        }
+    }
+    private fun initSpeechRecognizer() {
+        if (SpeechRecognizer.isRecognitionAvailable(this)) {
+            // 🌟 核心修正：使用 Android 16 推薦的 OnDevice 辨識器
+            val recognizer = if (android.os.Build.VERSION.SDK_INT >= 31) {
+                // 直接建立「純裝置端」辨識器，這會強制繞過網路檢查
+                SpeechRecognizer.createOnDeviceSpeechRecognizer(this)
+            } else {
+                SpeechRecognizer.createSpeechRecognizer(this)
+            }
+
+            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-TW")
+
+                // 🌟 強制設定 A：只允許離線辨識
+                putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+
+                // 🌟 強制設定 B：指定由 Google 引擎負責（避免系統亂跳）
+                putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
+            }
+
+            recognizer.setRecognitionListener(object : RecognitionListener {
+                // 🌟 這些是必須補齊的 8 個方法，補齊後紅字 object 就會消失
+                override fun onReadyForSpeech(params: Bundle?) { Log.d("STT", "可以開始說話了") }
+                override fun onBeginningOfSpeech() {}
+                override fun onRmsChanged(rmsdB: Float) {}
+                override fun onBufferReceived(buffer: ByteArray?) {}
+                override fun onEndOfSpeech() {}
+
+                override fun onError(error: Int) {
+                    // 這裡會抓到斷網時最關鍵的 error 13
+                    Log.e("STT", "辨識錯誤代碼: $error")
+                    speechRecognizer.destroy()
+                }
+
+                override fun onResults(results: Bundle?) {
+                    // 這裡拿到辨識出的車牌文字
+                    val data = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    val resultText = data?.get(0) ?: ""
+                    Log.d("STT", "辨識結果: $resultText")
+                }
+
+                override fun onPartialResults(partialResults: Bundle?) {}
+                override fun onEvent(eventType: Int, params: Bundle?) {}
+            })
+        }
     }
     override fun onDestroy() {
         if (::tts.isInitialized) { tts.stop(); tts.shutdown() }
