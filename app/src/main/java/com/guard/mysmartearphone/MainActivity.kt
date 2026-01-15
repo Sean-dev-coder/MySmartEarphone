@@ -156,6 +156,7 @@ class MainActivity : AppCompatActivity() {
             override fun onError(error: Int) {
                 if (isKeepListening) {
                     if (error == SpeechRecognizer.ERROR_AUDIO || error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) {
+                        speechRecognizer.cancel()
                         enableBluetoothMic(getSystemService(AUDIO_SERVICE) as AudioManager)
                     }
                     android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
