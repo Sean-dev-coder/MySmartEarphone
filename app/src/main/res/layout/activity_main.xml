@@ -45,7 +45,16 @@
         android:textColor="#ECEFF1"
         android:textSize="20sp"
         android:layout_marginBottom="20dp" />
-
+    <TextView
+        android:id="@+id/tv_debug_log"
+        android:layout_width="match_parent"
+        android:layout_height="150dp"
+        android:background="#000000"
+        android:textColor="#00FF00"
+        android:textSize="12sp"
+        android:padding="8dp"
+        android:scrollbars="vertical"
+        android:fontFamily="monospace" />
     <Button
         android:id="@+id/btn_listen"
         android:layout_width="match_parent"
