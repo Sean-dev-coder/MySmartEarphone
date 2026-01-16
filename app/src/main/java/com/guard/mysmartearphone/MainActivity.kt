@@ -230,15 +230,13 @@ class MainActivity : AppCompatActivity() {
     private fun processSingleResult(document: DocumentSnapshot, plateText: String) {
         val houseCode = document.getString("householdCode") ?: "未知"
         val notes = document.getString("notes") ?: ""
+        val source = if (document.metadata.isFromCache) "本地" else "雲端"
         runOnUiThread {
-            // ✅ 修復：Property access
-            tvResult.text = "✅ 成功：$houseCode\n車牌：$plateText\n備註：$notes"
+            tvResult.text = "✅ 成功：$houseCode\n車牌：$plateText\n來源：$source"
         }
-        addLog("✅ 匹配成功: $houseCode")
+        addLog("✅ [$source] 匹配成功: $houseCode") // 👈 這裡會顯示來源
         speakOut("找到了，這是 $houseCode 的住戶。$notes")
     }
-
-    // ✅ 修復：正確使用了傳入的 plateText 參數
     private fun handleMultipleResults(documents: com.google.firebase.firestore.QuerySnapshot, plateText: String) {
         if (documents.isEmpty) {
             runOnUiThread { tvResult.text = "❌ 查無資料：$plateText" }
@@ -246,16 +244,17 @@ class MainActivity : AppCompatActivity() {
             speakOut("找不到車牌 $plateText 的資料")
             return
         }
+        val source = if (documents.metadata.isFromCache) "本地" else "雲端"
         lastQueryDocuments = documents.documents
         if (documents.size() == 1) {
             val doc = documents.documents[0]
             val hCode = doc.getString("householdCode") ?: ""
             runOnUiThread { tvResult.text = "🔍 模糊命中：$hCode\n車牌：${doc.id}" }
-            addLog("✅ 模糊比對成功: $hCode")
+            addLog("✅ [$source] 模糊比對成功: $hCode")
             speakOut("查到了，這是 $hCode 的車")
         } else {
             val total = documents.size()
-            addLog("⚠️ 發現 $total 筆相似資料")
+            addLog("⚠️ [$source] 發現 ${documents.size()} 筆相似資料")
             val houseList = documents.documents.take(3).mapIndexed { i, d ->
                 "第${i + 1}個${d.getString("householdCode") ?: "未知"}"
             }.joinToString(" ")
