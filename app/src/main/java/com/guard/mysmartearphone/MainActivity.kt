@@ -1,5 +1,5 @@
 package com.guard.mysmartearphone
-
+import com.google.firebase.firestore.Source // 🌟 記得加這行 import
 import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestore
@@ -203,30 +203,59 @@ class MainActivity : AppCompatActivity() {
             "大陸豐蒔" -> "licensePlates_epoque"
             else -> "licensePlates"
         }
-
         val db = Firebase.firestore
-        addLog("🔍 檢索 [$selectedCommunity] -> $cleanPlate")
-
-        db.collection(collectionPath).document(cleanPlate).get()
+        // 🏥 第一重保險：判斷讀取來源 (Source)
+        val isOnline = isNetworkAvailable()
+        val source = if (isOnline) Source.DEFAULT else Source.CACHE
+        addLog("🔍 檢索 [$selectedCommunity] -> $cleanPlate (${if(source == Source.CACHE) "離線模式" else "雲端優先"})")
+        // 執行精確查詢
+        db.collection(collectionPath).document(cleanPlate).get(source)
             .addOnSuccessListener { document ->
                 if (document != null && document.exists()) {
-                    // ✅ 修復：將傳入的 cleanPlate 傳給處理 Function
+                    // ✅ 成功找到資料
                     processSingleResult(document, cleanPlate)
                 } else {
-                    db.collection(collectionPath).whereArrayContains("searchKeywords", cleanPlate).get()
-                        .addOnSuccessListener { documents ->
-                            // ✅ 修復：將傳入的 cleanPlate 傳給處理 Function
-                            handleMultipleResults(documents, cleanPlate)
-                        }
+                    // 🔍 精確比對失敗，進入第二重：模糊查詢
+                    runFuzzyQuery(collectionPath, cleanPlate, source)
                 }
             }
-            .addOnFailureListener {
-                speakOut("查詢失敗")
-                addLog("❌ Firestore 報錯: ${it.message}")
+            .addOnFailureListener { e ->
+                // 🚨 第三重保險：如果強制 CACHE 失敗（例如保險箱真的沒這筆資料）但現在有網路
+                if (source == Source.CACHE && isNetworkAvailable()) {
+                    addLog("⚠️ 本地無紀錄，自動切換雲端追蹤...")
+                    db.collection(collectionPath).document(cleanPlate).get(Source.SERVER)
+                        .addOnSuccessListener { processSingleResult(it, cleanPlate) }
+                        .addOnFailureListener { addLog("❌ 雲端亦無資料"); speakOut("查無此車") }
+                } else {
+                    addLog("❌ 查詢失敗: ${e.message}")
+                    speakOut("目前離線且查無本地紀錄")
+                }
+            }
+    }
+    // 🏥 模糊查詢專用備援函式
+    private fun runFuzzyQuery(collectionPath: String, cleanPlate: String, source: Source) {
+        val db = Firebase.firestore
+        db.collection(collectionPath).whereArrayContains("searchKeywords", cleanPlate).get(source)
+            .addOnSuccessListener { documents ->
+                handleMultipleResults(documents, cleanPlate)
+            }
+            .addOnFailureListener { e ->
+                // 模糊查詢也同樣做一次雲端降級備援
+                if (source == Source.CACHE && isNetworkAvailable()) {
+                    db.collection(collectionPath).whereArrayContains("searchKeywords", cleanPlate).get(Source.SERVER)
+                        .addOnSuccessListener { handleMultipleResults(it, cleanPlate) }
+                } else {
+                    addLog("❌ 模糊查詢報錯: ${e.message}")
+                }
             }
     }
 
-    // ✅ 修復：正確使用了傳入的 plateText 參數
+    // 🏥 網路狀態檢查小工具 (請確保這段也在 MainActivity 內)
+    private fun isNetworkAvailable(): Boolean {
+        val cm = getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        val activeNetwork = cm.activeNetworkInfo
+        return activeNetwork != null && activeNetwork.isConnectedOrConnecting
+    }
     private fun processSingleResult(document: DocumentSnapshot, plateText: String) {
         val houseCode = document.getString("householdCode") ?: "未知"
         val notes = document.getString("notes") ?: ""
@@ -347,11 +376,11 @@ class MainActivity : AppCompatActivity() {
         val db = FirebaseFirestore.getInstance()
         val settings = FirebaseFirestoreSettings.Builder()
             .setLocalCacheSettings(PersistentCacheSettings.newBuilder()
-                .setSizeBytes(100 * 1024 * 1024)
+                .setSizeBytes(100 * 1024 * 1024) // 100MB
                 .build())
             .build()
         db.firestoreSettings = settings
-        addLog("📦 離線快取已就緒 (100MB)")
+        addLog("📦 [保險箱] 強化初始化完成")
     }
 
     private fun syncAllDataForOffline(collectionPath: String) {
