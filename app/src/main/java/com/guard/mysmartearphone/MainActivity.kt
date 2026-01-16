@@ -163,8 +163,19 @@ class MainActivity : AppCompatActivity() {
             override fun onError(error: Int) {
                 if (isKeepListening) {
                     val errorMsg = when(error) {
-                        SpeechRecognizer.ERROR_NO_MATCH -> "未聽清"
-                        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "超時"
+                        SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "網路逾時"
+                        SpeechRecognizer.ERROR_NETWORK -> "網路連線失敗"
+                        SpeechRecognizer.ERROR_AUDIO -> "音訊錄製錯誤 (請檢查麥克風)"
+                        SpeechRecognizer.ERROR_SERVER -> "Google 伺服器異常"
+                        SpeechRecognizer.ERROR_CLIENT -> "手機端邏輯錯誤"
+                        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "聽取超時 (沒人說話)" //
+                        SpeechRecognizer.ERROR_NO_MATCH -> "未聽清/找不到匹配結果"
+                        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "辨識引擎忙碌中 (請重啟)"
+                        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "缺乏錄音權限"
+                        SpeechRecognizer.ERROR_TOO_MANY_REQUESTS -> "連線請求過於頻繁"
+                        SpeechRecognizer.ERROR_SERVER_DISCONNECTED -> "與伺服器斷開連線"
+                        SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED -> "不支援此語言"
+                        SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE -> "語言包暫時不可用"
                         else -> "錯誤 $error"
                     }
                     addLog("🔴 $errorMsg，1秒後自動重啟")
