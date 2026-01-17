@@ -267,10 +267,13 @@ class MainActivity : AppCompatActivity() {
             addLog("❌ 啟動失敗: ${e.message}")
         }
     }
-
     private fun queryVehicle(plateText: String) {
         val cleanPlate = convertSpokenPlate(plateText)
-        if (cleanPlate.isBlank()) return// Use the mapping logic for consistency
+        if (cleanPlate.isBlank() || !cleanPlate.matches(Regex(".*[A-Z0-9].*"))) {
+            addLog("☁️ 濾除純中文/無意義查詢: $plateText")
+            speakOut("聽不懂，請說車牌號碼")
+            return
+        }
         val collectionPath = communityPathMap[selectedCommunity] ?: "licensePlates"
 
         val db = Firebase.firestore
