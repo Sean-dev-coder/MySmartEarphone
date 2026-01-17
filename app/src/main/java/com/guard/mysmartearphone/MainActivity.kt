@@ -130,83 +130,114 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startListening() {
+        // 1. 核心守則：TTS 說話時絕對不准啟動監聽，這是避免 Error 11 的關鍵
         if (isTtsSpeaking) return
+        handler.removeCallbacksAndMessages(null)
+
+        // 2. 確保音訊路徑 (藍牙/耳機) 鎖定
         setupModernAudio()
 
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_WEB_SEARCH)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-TW")
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 600L)
-        }
-
-        speechRecognizer.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) {
-                runOnUiThread { findViewById<TextView>(R.id.tv_source_status).text = "🎙 正在聽取 $selectedCommunity..." }
+        try {
+            // 3. 如果引擎沒初始化，才建立它
+            if (!::speechRecognizer.isInitialized) {
+                speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
+            } else {
+                // 🌟 治本關鍵：不要 destroy，而是用 cancel() 強制將狀態機歸零
+                speechRecognizer.cancel()
             }
 
-            override fun onResults(results: Bundle?) {
-                val data = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                val text = data?.get(0) ?: ""
-                addLog("👂 聽取到: $text")
-
-                if (text.contains("結束") || text.contains("停止")) {
-                    isKeepListening = false
-                    resetToNormalAudioMode()
-                    lastQueryDocuments = listOf()
-                    speakOut("已結束查詢服務")
-                    addLog("⏹️ 停止監聽")
-                    return
+            // 4. 每次啟動前重新綁定監聽器，確保 Callback 鏈條完整
+            speechRecognizer.setRecognitionListener(object : RecognitionListener {
+                override fun onReadyForSpeech(params: Bundle?) {
+                    runOnUiThread { findViewById<TextView>(R.id.tv_source_status).text = "🎙 正在聽取 $selectedCommunity..." }
                 }
 
-                if (lastQueryDocuments.size > 1) {
-                    val index = when {
-                        text.contains("第一個") || text == "1" || text == "一" -> 0
-                        text.contains("第二個") || text == "2" || text == "二" -> 1
-                        text.contains("第三個") || text == "3" || text == "三" -> 2
-                        else -> -1
-                    }
-                    if (index != -1 && index < lastQueryDocuments.size) {
-                        val doc = lastQueryDocuments[index]
+                override fun onResults(results: Bundle?) {
+                    val data = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    val text = data?.get(0) ?: ""
+                    addLog("👂 聽取到: $text")
+
+                    if (text.contains("結束") || text.contains("停止")) {
+                        isKeepListening = false
+                        resetToNormalAudioMode()
                         lastQueryDocuments = listOf()
-                        processSelection(doc)
+                        speakOut("已結束查詢服務")
                         return
                     }
+
+                    // 處理多筆選擇邏輯
+                    if (lastQueryDocuments.size > 1) {
+                        val index = when {
+                            text.contains("第一個") || text == "1" || text == "一" -> 0
+                            text.contains("第二個") || text == "2" || text == "二" -> 1
+                            text.contains("第三個") || text == "3" || text == "三" -> 2
+                            else -> -1
+                        }
+                        if (index != -1 && index < lastQueryDocuments.size) {
+                            val doc = lastQueryDocuments[index]
+                            lastQueryDocuments = listOf()
+                            processSelection(doc)
+                            return
+                        }
+                    }
+
+                    lastQueryDocuments = listOf()
+                    queryVehicle(text)
+
+                    // 💡 註：這裡不手動重啟，由 queryVehicle 內的 TTS 完成後觸發 startListening
                 }
-                lastQueryDocuments = listOf()
-                queryVehicle(text)
+
+                override fun onError(error: Int) {
+                    if (isKeepListening) {
+                        val errorMsg = when(error) {
+                            11 -> "系統暫時鎖定 (11)"
+                            SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "網路逾時"
+                            SpeechRecognizer.ERROR_NETWORK -> "網路連線失敗"
+                            SpeechRecognizer.ERROR_AUDIO -> "音訊錄製錯誤 (請檢查麥克風)"
+                            SpeechRecognizer.ERROR_SERVER -> "Google 伺服器異常"
+                            SpeechRecognizer.ERROR_CLIENT -> "手機端邏輯錯誤"
+                            SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "聽取超時 (沒人說話)" //
+                            SpeechRecognizer.ERROR_NO_MATCH -> "未聽清/找不到匹配結果"
+                            SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "辨識引擎忙碌中 (請重啟)"
+                            SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "缺乏錄音權限"
+                            SpeechRecognizer.ERROR_TOO_MANY_REQUESTS -> "連線請求過於頻繁"
+                            SpeechRecognizer.ERROR_SERVER_DISCONNECTED -> "與伺服器斷開連線"
+                            SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED -> "不支援此語言"
+                            SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE -> "語言包暫時不可用"
+                            else -> "錯誤 $error"
+                        }
+                        addLog("🔴 $errorMsg，1.5秒後自動重試")
+
+                        // 出錯時給一點緩衝時間再重啟，避免進入連環報錯
+                        handler.postDelayed({
+                            if (isKeepListening && !isTtsSpeaking) startListening()
+                        }, 1500)
+                    }
+                }
+
+                // 必要空實作
+                override fun onBeginningOfSpeech() {}
+                override fun onRmsChanged(rmsdB: Float) {}
+                override fun onBufferReceived(buffer: ByteArray?) {}
+                override fun onEndOfSpeech() {}
+                override fun onPartialResults(partialResults: Bundle?) {}
+                override fun onEvent(eventType: Int, params: Bundle?) {}
+            })
+
+            // 5. 設定啟動參數
+            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_WEB_SEARCH)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-TW")
+                // 減少系統負擔，只拿一筆結果
+                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
             }
 
-            override fun onError(error: Int) {
-                if (isKeepListening) {
-                    val errorMsg = when(error) {
-                        SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "網路逾時"
-                        SpeechRecognizer.ERROR_NETWORK -> "網路連線失敗"
-                        SpeechRecognizer.ERROR_AUDIO -> "音訊錄製錯誤 (請檢查麥克風)"
-                        SpeechRecognizer.ERROR_SERVER -> "Google 伺服器異常"
-                        SpeechRecognizer.ERROR_CLIENT -> "手機端邏輯錯誤"
-                        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "聽取超時 (沒人說話)" //
-                        SpeechRecognizer.ERROR_NO_MATCH -> "未聽清/找不到匹配結果"
-                        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "辨識引擎忙碌中 (請重啟)"
-                        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "缺乏錄音權限"
-                        SpeechRecognizer.ERROR_TOO_MANY_REQUESTS -> "連線請求過於頻繁"
-                        SpeechRecognizer.ERROR_SERVER_DISCONNECTED -> "與伺服器斷開連線"
-                        SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED -> "不支援此語言"
-                        SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE -> "語言包暫時不可用"
-                        else -> "錯誤 $error"
-                    }
-                    addLog("🔴 $errorMsg，1秒後自動重啟")
-                    speechRecognizer.cancel()
-                    handler.postDelayed({ if (!isTtsSpeaking) startListening() }, 1000)
-                }
-            }
-            override fun onRmsChanged(rmsdB: Float) {}
-            override fun onBeginningOfSpeech() {}
-            override fun onBufferReceived(buffer: ByteArray?) {}
-            override fun onEndOfSpeech() {}
-            override fun onPartialResults(partialResults: Bundle?) {}
-            override fun onEvent(eventType: Int, params: Bundle?) {}
-        })
-        speechRecognizer.startListening(intent)
+            speechRecognizer.startListening(intent)
+
+        } catch (e: Exception) {
+            addLog("❌ 啟動失敗: ${e.message}")
+            handler.postDelayed({ if (isKeepListening) startListening() }, 2000)
+        }
     }
 
     private fun queryVehicle(plateText: String) {
