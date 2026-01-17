@@ -130,23 +130,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startListening() {
-        // 1. 核心守則：TTS 說話時絕對不准啟動監聽，這是避免 Error 11 的關鍵
-        if (isTtsSpeaking) return
-        handler.removeCallbacksAndMessages(null)
-
-        // 2. 確保音訊路徑 (藍牙/耳機) 鎖定
+        if (isTtsSpeaking || !isKeepListening) return
+        handler.removeCallbacksAndMessages(null) // 徹底清空所有重啟任務，防洗版
         setupModernAudio()
 
         try {
-            // 3. 如果引擎沒初始化，才建立它
-            if (!::speechRecognizer.isInitialized) {
-                speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
-            } else {
-                // 🌟 治本關鍵：不要 destroy，而是用 cancel() 強制將狀態機歸零
+            if (::speechRecognizer.isInitialized) {
+                // 🌟 治本關鍵：啟動前先強制歸零
                 speechRecognizer.cancel()
+            } else {
+                speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
             }
 
-            // 4. 每次啟動前重新綁定監聽器，確保 Callback 鏈條完整
+            // 🌟 重新綁定監聽器 (確保你的業務邏輯都在)
             speechRecognizer.setRecognitionListener(object : RecognitionListener {
                 override fun onReadyForSpeech(params: Bundle?) {
                     runOnUiThread { findViewById<TextView>(R.id.tv_source_status).text = "🎙 正在聽取 $selectedCommunity..." }
@@ -165,7 +161,7 @@ class MainActivity : AppCompatActivity() {
                         return
                     }
 
-                    // 處理多筆選擇邏輯
+                    // (保留你的多筆選擇邏輯...)
                     if (lastQueryDocuments.size > 1) {
                         val index = when {
                             text.contains("第一個") || text == "1" || text == "一" -> 0
@@ -183,8 +179,7 @@ class MainActivity : AppCompatActivity() {
 
                     lastQueryDocuments = listOf()
                     queryVehicle(text)
-
-                    // 💡 註：這裡不手動重啟，由 queryVehicle 內的 TTS 完成後觸發 startListening
+                    // 💡 註：由 TTS onDone 觸發重啟
                 }
 
                 override fun onError(error: Int) {
@@ -197,7 +192,7 @@ class MainActivity : AppCompatActivity() {
                             SpeechRecognizer.ERROR_SERVER -> "Google 伺服器異常"
                             SpeechRecognizer.ERROR_CLIENT -> "手機端邏輯錯誤"
                             SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "聽取超時 (沒人說話)" //
-                            SpeechRecognizer.ERROR_NO_MATCH -> "未聽清/找不到匹配結果"
+                            SpeechRecognizer.ERROR_NO_MATCH -> "未收到聲音"
                             SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "辨識引擎忙碌中 (請重啟)"
                             SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "缺乏錄音權限"
                             SpeechRecognizer.ERROR_TOO_MANY_REQUESTS -> "連線請求過於頻繁"
@@ -206,16 +201,12 @@ class MainActivity : AppCompatActivity() {
                             SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE -> "語言包暫時不可用"
                             else -> "錯誤 $error"
                         }
-                        addLog("🔴 $errorMsg，1.5秒後自動重試")
-
-                        // 出錯時給一點緩衝時間再重啟，避免進入連環報錯
-                        handler.postDelayed({
-                            if (isKeepListening && !isTtsSpeaking) startListening()
-                        }, 1500)
+                        addLog("🔴 $errorMsg，0.5秒後重啟")
+                        // 🌟 錯誤後透過 handler 延遲重啟，拉開時間避免撞車
+                        handler.postDelayed({ if (isKeepListening && !isTtsSpeaking) startListening() }, 500)
                     }
                 }
 
-                // 必要空實作
                 override fun onBeginningOfSpeech() {}
                 override fun onRmsChanged(rmsdB: Float) {}
                 override fun onBufferReceived(buffer: ByteArray?) {}
@@ -224,15 +215,17 @@ class MainActivity : AppCompatActivity() {
                 override fun onEvent(eventType: Int, params: Bundle?) {}
             })
 
-            // 5. 設定啟動參數
-            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_WEB_SEARCH)
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-TW")
-                // 減少系統負擔，只拿一筆結果
-                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-            }
-
-            speechRecognizer.startListening(intent)
+            // 🌟 核心修正：給系統 200ms 的「狀態切換期」，避免剛 cancel 就啟動導致的邏輯錯誤
+            handler.postDelayed({
+                if (!isTtsSpeaking && isKeepListening) {
+                    val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_WEB_SEARCH)
+                        putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-TW")
+                        putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+                    }
+                    speechRecognizer.startListening(intent)
+                }
+            }, 200)
 
         } catch (e: Exception) {
             addLog("❌ 啟動失敗: ${e.message}")
@@ -332,7 +325,16 @@ class MainActivity : AppCompatActivity() {
 
     private fun speakOut(text: String) {
         isTtsSpeaking = true
-        speechRecognizer.stopListening()
+
+        // 🌟 修正：使用 cancel() 確保引擎狀態徹底歸零，且加上 try-catch 防禦
+        try {
+            if (::speechRecognizer.isInitialized) {
+                speechRecognizer.cancel()
+            }
+        } catch (e: Exception) {
+            Log.e("Speech", "Cancel failed", e)
+        }
+
         val params = Bundle().apply { putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, "MessageID") }
         tts.speak(text, TextToSpeech.QUEUE_FLUSH, params, "MessageID")
         addLog("📢 TTS: $text")
