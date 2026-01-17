@@ -41,7 +41,11 @@ class MainActivity : AppCompatActivity() {
     private var isTtsSpeaking = false
     private var lastQueryDocuments: List<DocumentSnapshot> = listOf()
     private val handler = Handler(Looper.getMainLooper())
-
+    private val communityPathMap = mapOf(
+        "大陸麗格" to "licensePlates",
+        "大陸豐蒔" to "licensePlates_epoque",
+        "大陸寶格" to "licensePlates_treasure"
+    )
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -70,11 +74,23 @@ class MainActivity : AppCompatActivity() {
         spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
                 selectedCommunity = communities[position]
-                if (isFirstLoad) { isFirstLoad = false; return }
+
+                // 1. Get the English path from the map (default to licensePlates if not found)
+                val collectionPath = communityPathMap[selectedCommunity] ?: "licensePlates"
+
+                if (isFirstLoad) {
+                    isFirstLoad = false
+                    return
+                }
+
                 stopSpeechLogic()
                 speakOut("已切換至 $selectedCommunity")
-                syncAllDataForOffline(selectedCommunity)
-                addLog("📍 切換社區至: $selectedCommunity")
+
+                // 2. Pass the correct English path to sync
+                syncAllDataForOffline(collectionPath)
+
+                // 3. Updated log to show both names for debugging
+                addLog("📍 切換社區: $selectedCommunity (路徑: $collectionPath)")
             }
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
@@ -195,34 +211,26 @@ class MainActivity : AppCompatActivity() {
 
     private fun queryVehicle(plateText: String) {
         val cleanPlate = convertSpokenPlate(plateText)
-        if (cleanPlate.isBlank()) return
+        if (cleanPlate.isBlank()) return// Use the mapping logic for consistency
+        val collectionPath = communityPathMap[selectedCommunity] ?: "licensePlates"
 
-        val collectionPath = when (selectedCommunity) {
-            "大陸麗格" -> "licensePlates"
-            "大陸寶格" -> "licensePlates_treasure"
-            "大陸豐蒔" -> "licensePlates_epoque"
-            else -> "licensePlates"
-        }
         val db = Firebase.firestore
-        // 🏥 第一重保險：判斷讀取來源 (Source)
         val isOnline = isNetworkAvailable()
         val source = if (isOnline) Source.DEFAULT else Source.CACHE
-        addLog("🔍 檢索 [$selectedCommunity] -> $cleanPlate (${if(source == Source.CACHE) "離線模式" else "雲端優先"})")
-        // 執行精確查詢
+
+        addLog("🔍 檢索 [$selectedCommunity] -> $cleanPlate (集合: $collectionPath, 來源: ${if(source == Source.CACHE) "離線" else "雲端"})")
+
         db.collection(collectionPath).document(cleanPlate).get(source)
             .addOnSuccessListener { document ->
                 if (document != null && document.exists()) {
-                    // ✅ 成功找到資料
                     processSingleResult(document, cleanPlate)
                 } else {
-                    // 🔍 精確比對失敗，進入第二重：模糊查詢
                     runFuzzyQuery(collectionPath, cleanPlate, source)
                 }
             }
             .addOnFailureListener { e ->
-                // 🚨 第三重保險：如果強制 CACHE 失敗（例如保險箱真的沒這筆資料）但現在有網路
                 if (source == Source.CACHE && isNetworkAvailable()) {
-                    addLog("⚠️ 本地無紀錄，自動切換雲端追蹤...")
+                    addLog("⚠️ 本地無紀錄，嘗試雲端...")
                     db.collection(collectionPath).document(cleanPlate).get(Source.SERVER)
                         .addOnSuccessListener { processSingleResult(it, cleanPlate) }
                         .addOnFailureListener { addLog("❌ 雲端亦無資料"); speakOut("查無此車") }
