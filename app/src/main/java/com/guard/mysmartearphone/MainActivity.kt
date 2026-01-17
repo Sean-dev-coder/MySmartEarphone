@@ -46,6 +46,8 @@ class MainActivity : AppCompatActivity() {
         "大陸豐蒔" to "licensePlates_epoque",
         "大陸寶格" to "licensePlates_treasure"
     )
+    private var isStarting = false // 狀態鎖定旗標
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -106,6 +108,7 @@ class MainActivity : AppCompatActivity() {
         speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
 
         btnListen.setOnClickListener {
+            if (isKeepListening || isStarting) return@setOnClickListener
             checkAudioSource(tvStatus)
             isKeepListening = true
             setupModernAudio()
@@ -116,9 +119,13 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupTTSListener() {
         tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-            override fun onStart(utteranceId: String?) { isTtsSpeaking = true }
+            override fun onStart(utteranceId: String?) {
+                isTtsSpeaking = true
+                updateButtonUI() // TTS 開始說話，按鈕變灰
+            }
             override fun onDone(utteranceId: String?) {
                 isTtsSpeaking = false
+                updateButtonUI() // TTS 說完話，按鈕恢復
                 runOnUiThread {
                     if (isKeepListening) {
                         handler.postDelayed({ if (!isTtsSpeaking) startListening() }, 1000)
@@ -128,23 +135,51 @@ class MainActivity : AppCompatActivity() {
             override fun onError(utteranceId: String?) { isTtsSpeaking = false }
         })
     }
+    // 🌟 2. 建立一個統一控管按鈕 UI 的函式
+    private fun updateButtonUI() {
+        runOnUiThread {
+            val btnListen = findViewById<Button>(R.id.btn_listen)
+            // 當「正在啟動中」、「正在 TTS 說話」或「引擎忙碌」時，按鈕不可點擊
+            val shouldDisable = isStarting || isTtsSpeaking
 
+            if (shouldDisable) {
+                btnListen.isEnabled = false
+                btnListen.alpha = 0.5f // 變成半透明灰色
+                btnListen.text = "引擎忙碌中..."
+            } else {
+                btnListen.isEnabled = true
+                btnListen.alpha = 1.0f // 恢復原色
+                btnListen.text = if (isKeepListening) "監聽中..." else "開始監聽"
+            }
+        }
+    }
+
+    // 🌟 3. 完整治本版 startListening (含 UI 防呆與狀態歸零)
     private fun startListening() {
-        if (isTtsSpeaking || !isKeepListening) return
-        handler.removeCallbacksAndMessages(null) // 徹底清空所有重啟任務，防洗版
+        // 門檻檢查
+        if (isTtsSpeaking || !isKeepListening || isStarting) {
+            updateButtonUI()
+            return
+        }
+
+        isStarting = true // 🔒 執行序上鎖
+        updateButtonUI()  // 變更按鈕為灰色
+
+        handler.removeCallbacksAndMessages(null)
         setupModernAudio()
 
         try {
             if (::speechRecognizer.isInitialized) {
-                // 🌟 治本關鍵：啟動前先強制歸零
-                speechRecognizer.cancel()
+                speechRecognizer.cancel() // 物理歸零
             } else {
                 speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
             }
 
-            // 🌟 重新綁定監聽器 (確保你的業務邏輯都在)
+            // 重新綁定監聽器 (確保業務邏輯完整)
             speechRecognizer.setRecognitionListener(object : RecognitionListener {
                 override fun onReadyForSpeech(params: Bundle?) {
+                    isStarting = false // 準備好收音了，解鎖
+                    updateButtonUI()
                     runOnUiThread { findViewById<TextView>(R.id.tv_source_status).text = "🎙 正在聽取 $selectedCommunity..." }
                 }
 
@@ -156,12 +191,12 @@ class MainActivity : AppCompatActivity() {
                     if (text.contains("結束") || text.contains("停止")) {
                         isKeepListening = false
                         resetToNormalAudioMode()
-                        lastQueryDocuments = listOf()
                         speakOut("已結束查詢服務")
+                        updateButtonUI()
                         return
                     }
 
-                    // (保留你的多筆選擇邏輯...)
+                    // 多筆選擇邏輯
                     if (lastQueryDocuments.size > 1) {
                         val index = when {
                             text.contains("第一個") || text == "1" || text == "一" -> 0
@@ -170,19 +205,19 @@ class MainActivity : AppCompatActivity() {
                             else -> -1
                         }
                         if (index != -1 && index < lastQueryDocuments.size) {
-                            val doc = lastQueryDocuments[index]
+                            processSelection(lastQueryDocuments[index])
                             lastQueryDocuments = listOf()
-                            processSelection(doc)
                             return
                         }
                     }
 
                     lastQueryDocuments = listOf()
                     queryVehicle(text)
-                    // 💡 註：由 TTS onDone 觸發重啟
+                    updateButtonUI()
                 }
 
                 override fun onError(error: Int) {
+                    isStarting = false
                     if (isKeepListening) {
                         val errorMsg = when(error) {
                             11 -> "系統暫時鎖定 (11)"
@@ -207,6 +242,7 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
+                // 必要空實作
                 override fun onBeginningOfSpeech() {}
                 override fun onRmsChanged(rmsdB: Float) {}
                 override fun onBufferReceived(buffer: ByteArray?) {}
@@ -215,21 +251,20 @@ class MainActivity : AppCompatActivity() {
                 override fun onEvent(eventType: Int, params: Bundle?) {}
             })
 
-            // 🌟 核心修正：給系統 200ms 的「狀態切換期」，避免剛 cancel 就啟動導致的邏輯錯誤
+            // 🌟 物理緩衝：解決「結果後必噴紅字」的關鍵
             handler.postDelayed({
-                if (!isTtsSpeaking && isKeepListening) {
-                    val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_WEB_SEARCH)
-                        putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-TW")
-                        putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-                    }
-                    speechRecognizer.startListening(intent)
+                val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_WEB_SEARCH)
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-TW")
+                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
                 }
-            }, 200)
+                speechRecognizer.startListening(intent)
+            }, 300) // 給予 300ms 讓底層 cancel 徹底完成
 
         } catch (e: Exception) {
+            isStarting = false
+            updateButtonUI()
             addLog("❌ 啟動失敗: ${e.message}")
-            handler.postDelayed({ if (isKeepListening) startListening() }, 2000)
         }
     }
 
